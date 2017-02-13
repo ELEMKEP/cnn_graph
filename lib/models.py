@@ -7,8 +7,8 @@ import numpy as np
 import os, time, collections, shutil
 
 
-#NFEATURES = 28**2
-#NCLASSES = 10
+NFEATURES = 28**2
+NCLASSES = 10
 
 
 # Common methods for all models

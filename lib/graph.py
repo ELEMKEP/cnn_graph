@@ -28,7 +28,17 @@ def distance_scipy_spatial(z, k=4, metric='euclidean'):
     d.sort()
     d = d[:, 1:k+1]
     return d, idx
-
+    
+def distance_scipy_spatial_thresh(z, k=4, thresh=60, metric='euclidean'):
+    """Compute exact pairwise distances."""
+    d = scipy.spatial.distance.pdist(z, metric)
+    d = scipy.spatial.distance.squareform(d)
+    # k-NN graph.
+    d[d>60] = float('Inf')
+    idx = np.argsort(d)[:, 1:k+1]
+    d.sort()
+    d = d[:, 1:k+1]
+    return d, idx
 
 def distance_sklearn_metrics(z, k=4, metric='euclidean'):
     """Compute exact pairwise distances."""
