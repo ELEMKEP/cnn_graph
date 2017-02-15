@@ -17,15 +17,16 @@ from matplotlib.patches import Circle
 from matplotlib.text import Text
 import scipy.sparse
 from lib import models, utils, graph, coarsening
-from graph_signal_importer2 import Importer
+from graph_signal_importer2 import ImporterIndep
 import time
+import pickle
 
 # Training parameters
 COARSEN_LEVEL = 6
 #DATA_FILE = 'out_thresh_20161221134736.dat'  # mat-file storing data
 #DATA_FILE = 'raw_20170126221414.dat' # power signal, distance 5-band graph (thresholded 0-1)
-DATA_FILE = 'raw_20170213165455_subject_dep.dat' # pow, dist, 5-band, 0~ thresh, subj-dep
-# DATA_FILE = 'raw_20170213173430_per_subject.dat' # pow, dist, 5-band, 0~ thresh, subj-wise
+# DATA_FILE = 'raw_20170213165455_subject_dep.dat' # pow, dist, 5-band, 0~ thresh, subj-dep
+DATA_FILE = 'raw_20170213173430_per_subject.dat' # pow, dist, 5-band, 0~ thresh, subj-wise
 
 def gc_dist(u, v):
   assert u[2]==v[2], 'Should have same radius in spherical coordinate!'
@@ -133,75 +134,90 @@ def adjacency_dist_single_layer():
   # Starting graph process
   A = graph.adjacency(dist, idx).astype(np.float32)
   return A
-  
 
 # Start point
-  
-#A = adjacency_dist_single_layer()
-
-importer = Importer(DATA_FILE, [0.6, 0.2, 0.2])
-A = importer.graph
-
-graphs, perm = coarsening.coarsen(A, levels=COARSEN_LEVEL, self_connections=False)
-L = [graph.laplacian(gA, normalized=True) for gA in graphs]
-
-#draw_graph(ge_2d_sph_coords, A, ge_labels)
-graph.plot_spectrum(L)
-
-n_train = importer.get_train_dimension()[0]
-n_valid = importer.get_valid_dimension()[0]
-n_test = importer.get_test_dimension()[0]
-
-_, signal_train, labels_train = importer.next_batch_train_(n_train)
-_, signal_valid, labels_valid = importer.next_batch_valid_(n_valid)
-_, signal_test, labels_test = importer.next_batch_test_(n_test)
-
-signal_len = signal_train.shape[2]
-signal_train = np.reshape(signal_train, (-1, signal_len))
-signal_valid = np.reshape(signal_valid, (-1, signal_len))
-signal_test  = np.reshape(signal_test,  (-1, signal_len))
-
-t_start = time.process_time()
-signal_train = coarsening.perm_data(signal_train, perm)
-signal_valid = coarsening.perm_data(signal_valid, perm)
-signal_test = coarsening.perm_data(signal_test, perm)
-print('Execution time: {:.2f}s'.format(time.process_time() - t_start))
-del perm
-
 
 # Neural network
-common = dict()
-common['dir_name']       = 'deap/'
-common['num_epochs']     = 50
-common['batch_size']     = 512
-common['decay_steps']    = n_train / common['batch_size']
-common['eval_frequency'] = 58*3
-common['brelu']          = 'b1relu'
-common['pool']           = 'mpool1'
-C = 2  # number of classes
-
-name = 'test1'
-params = common.copy()
-params['dir_name'] += name
-params['regularization'] = 5e-4
-params['dropout']        = 0
-params['learning_rate']  = 0.0001
-params['decay_rate']     = 0.95
-params['momentum']       = 0.9
-params['F']              = [40, 80, 80, 160, 160, 320]
-params['K']              = [4, 2, 2, 2, 2, 1]
-params['p']              = [2, 2, 2, 2, 2, 2]
-params['M']              = [C]
 
 
-# Go to real training
-t_start = time.process_time()
+importer = ImporterIndep(DATA_FILE)
 model_perf = utils.model_perf()
-model_perf.test(models.cgcnn(L, **params), name, params,
-                signal_train, labels_train,
-                signal_valid, labels_valid, 
-                signal_test,  labels_test)
-print('Execution time: {:.2f}s'.format(time.process_time() - t_start))
+
+for subject_idx in range(32):
+  A = importer.graph
+
+  graphs, perm = coarsening.coarsen(A, levels=COARSEN_LEVEL,
+                                    self_connections=False)
+  L = [graph.laplacian(gA, normalized=True) for gA in graphs]
+
+  subject_train = list(range(32))
+  subject_valid = [subject_train.pop(subject_idx)]
+
+  importer.set_train_val_subjects(subject_train, subject_valid)
+
+  n_train = importer.train_length
+  n_valid = importer.valid_length
+
+  _, signal_train, labels_train = importer.next_batch_train_(n_train)
+  _, signal_valid, labels_valid = importer.next_batch_valid_(n_valid)
+
+  print((signal_train.shape,
+         labels_train.shape,
+         signal_valid.shape,
+         labels_valid.shape))
+
+  signal_dim = signal_train.shape[-1]
+  signal_train = np.reshape(signal_train, (-1, signal_dim))
+  signal_valid = np.reshape(signal_valid, (-1, signal_dim))
+
+  t_start = time.process_time()
+  signal_train = coarsening.perm_data(signal_train, perm)
+  signal_valid = coarsening.perm_data(signal_valid, perm)
+  print('Execution time: {:.2f}s'.format(time.process_time() - t_start))
+  del perm
+
+  common = dict()
+  common['dir_name'] = 'deap/'
+  common['num_epochs'] = 50
+  common['batch_size'] = 580
+  common['decay_steps'] = n_train / common['batch_size']
+  common['eval_frequency'] = 124 #124 iter for 1 epoch in 31/1 subject(s)
+  common['brelu'] = 'b1relu'
+  common['pool'] = 'mpool1'
+  C = 2  # number of classes
+
+  name = 'test'+str(subject_idx)
+  params = common.copy()
+  params['dir_name'] += name
+  params['regularization'] = 5e-4
+  params['dropout']        = 0
+  params['learning_rate']  = 0.00001
+  params['decay_rate']     = 0.95
+  params['momentum']       = 0.9
+  params['F']              = [40, 80, 80, 160, 160, 240]
+  params['K']              = [4, 2, 2, 2, 2, 1]
+  params['p']              = [2, 2, 2, 2, 2, 2]
+  params['M']              = [C]
+
+
+  # Go to real training
+  t_start = time.process_time()
+  model_perf.test(models.cgcnn(L, **params), name, params,
+                  signal_train, labels_train,
+                  signal_valid, labels_valid,
+                  signal_valid, labels_valid)
+  print('Execution time: {:.2f}s'.format(time.process_time() - t_start))
+
+print('Total result')
+print('Model accuracy in TEST')
+print(model_perf.test_accuracy)
+print('Model F1-value in TEST')
+print(model_perf.test_f1)
+print('Model loss in TEST')
+print(model_perf.test_loss)
+
+with open('test_result.dat', 'wb') as f:
+  pickle.dump(model_perf, f)
 
 
 
